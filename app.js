@@ -156,6 +156,7 @@ async function commitForm(form, action) {
 }
 function imageList(files) {
   if (files.length > 5) throw new Error("每次最多上傳 5 張照片。");
+  const date = dateKey();
   return Promise.all([...files].map(async (file) => {
     if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
       throw new Error("請選擇 JPG、PNG、WebP 或 GIF 照片。");
@@ -163,7 +164,7 @@ function imageList(files) {
     if (file.size > 8 * 1024 * 1024) throw new Error("每張照片須小於或等於 8 MB。");
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve({ name:file.name, url:reader.result });
+      reader.onload = () => resolve({ name:file.name, url:reader.result, date });
       reader.onerror = () => reject(new Error("照片讀取失敗。"));
       reader.readAsDataURL(file);
     });
@@ -539,7 +540,7 @@ function bindInspection() {
       const id = `巡-${String(data.nextId).padStart(4, "0")}`;
       await save({
         ...data, nextId:data.nextId + 1, draft:null,
-        records:[...data.records, { ...fields, id, status:"open", after:[], reviews:[] }],
+        records:[...data.records, { ...fields, id, status:"open", during:[], after:[], reviews:[] }],
       });
       inspectionView = null;
       notify(`${id} 已送交改善追蹤。`);
@@ -581,7 +582,9 @@ function openRecord(id) {
     <div class="info"><p>${badge(record.status)} ${issueStatus(record) === "late" ? badge("late") : ""}</p>
     <p><strong>位置</strong> ${constructionZone.name}${record.position && record.location === positionCoordinates(record.position) ? "" : ` · ${el(record.location)}`}</p>
     ${record.position ? positionDetails(record.position) : ""}<p class="preview-text">${el(record.notes)}</p></div>
-    <h3>改善前照片</h3>${photos(record.before)}<h3>改善後照片</h3>${photos(record.after)}
+    <h3>改善前照片</h3>${photos(record.before)}
+    <h3>改善中</h3>${record.duringNotes ? `<p class="preview-text">${el(record.duringNotes)}</p>` : ""}${photos(record.during ?? [])}
+    <h3>改善後</h3>${record.afterNotes ? `<p class="preview-text">${el(record.afterNotes)}</p>` : ""}${photos(record.after)}
     <h3>複查紀錄</h3>${record.reviews.length ? table(["日期", "複查人員", "結果", "紀錄"], record.reviews.map((review) => [
       el(review.date), el(review.reviewer), review.passed ? "通過並結案" : "退回改善", el(review.notes),
     ])) : '<p class="field-note">尚無複查紀錄</p>'}
@@ -591,7 +594,10 @@ function openRecord(id) {
       <label class="field">改善期限<input name="due" type="date" min="${record.date}" value="${el(record.due)}" required></label>
       <label class="field">處理狀態<select name="status">${["open","progress","review"].map((key) =>
         `<option value="${key}"${record.status === key ? " selected" : ""}>${statusNames[key]}</option>`).join("")}</select></label>
-      <label class="field">新增改善後照片<input type="file" name="after" accept="image/jpeg,image/png,image/webp,image/gif" multiple><small>每次最多 5 張，每張最多 8 MB。</small></label>
+      <label class="field full">改善中說明<textarea name="duringNotes" maxlength="4000">${el(record.duringNotes)}</textarea></label>
+      <label class="field full">新增改善中照片<input type="file" name="during" accept="image/jpeg,image/png,image/webp,image/gif" multiple><small>每次最多 5 張，每張最多 8 MB。</small></label>
+      <label class="field full">改善後說明<textarea name="afterNotes" maxlength="4000">${el(record.afterNotes)}</textarea></label>
+      <label class="field full">新增改善後照片<input type="file" name="after" accept="image/jpeg,image/png,image/webp,image/gif" multiple><small>每次最多 5 張，每張最多 8 MB。</small></label>
     </div><div class="actions"><button class="btn primary">儲存改善進度</button></div></form>
     ${canReview ? `<h3>登錄複查結果</h3><form id="review-record"><div class="form-grid">
       <label class="field">複查人員<input name="reviewer" required maxlength="80"></label>
@@ -606,8 +612,14 @@ function openRecord(id) {
     event.preventDefault();
     commitForm(update, async () => {
       const form = new FormData(update);
+      const [duringPhotos, afterPhotos] = await Promise.all([imageList(update.elements.during.files), imageList(update.elements.after.files)]);
+      const duringNotes = form.get("duringNotes").trim();
+      const afterNotes = form.get("afterNotes").trim();
+      const during = [...(record.during ?? []), ...duringPhotos];
+      const after = [...record.after, ...afterPhotos];
       await saveRecord({ ...record, owner:requireText(form.get("owner")), due:form.get("due"), status:form.get("status"),
-        after:[...record.after, ...await imageList(update.elements.after.files)] });
+        during, duringNotes, duringDate:duringPhotos.length || duringNotes !== (record.duringNotes ?? "") ? dateKey() : record.duringDate,
+        after, afterNotes, afterDate:afterPhotos.length || afterNotes !== (record.afterNotes ?? "") ? dateKey() : record.afterDate });
       notify("已更新改善進度。");
     });
   });
@@ -633,7 +645,7 @@ async function saveRecord(record) {
 }
 
 function reportPage() {
-  return heading("報表匯出", "依日期篩選巡檢與缺失紀錄，匯出 CSV 或列印。") +
+  return heading("報表匯出", "依日期篩選巡檢與缺失紀錄，匯出 CSV、列印，或下載缺失改善照片表。") +
     `<section class="panel" id="report-panel">
     <div class="section-head report-actions"><div class="tabs" aria-label="報表種類">${[
       ["inspection","巡檢紀錄"], ["issues","缺失改善"], ["weekly","每週職安摘要"],
@@ -654,7 +666,7 @@ function reportRows() {
     rows:records.map((record) => [record.id, record.date, constructionZone.name, record.location, record.title, record.notes, record.before.length]),
   };
   if (reportType === "issues") return {
-    title:"缺失改善報表",
+    title:"缺失改善報表", records,
     headers:["編號", "巡檢日期", "工區", "樁號／設施", "缺失標題", "改善負責人", "改善期限", "處理狀態", "逾期", "改善前照片張數", "改善後照片張數", "複查紀錄"],
     rows:records.map((record) => [
       record.id, record.date, constructionZone.name, record.location, record.title, record.owner, record.due, statusNames[record.status],
@@ -677,8 +689,17 @@ function reportRows() {
 }
 function reportPreview() {
   if (!(reportFrom && reportTo && reportFrom <= reportTo)) return '<p class="empty">請輸入有效的報表日期範圍。</p>';
-  const { title, headers, rows } = reportRows();
-  return `<div class="section-head"><h2>${title}</h2></div><p class="report-meta">${el(reportFrom)} 至 ${el(reportTo)}${reportType === "weekly" ? "" : ` · 共 ${rows.length} 筆`}</p>${table(headers, rows.map((row) => row.map((value) => `<span class="preview-text">${el(value)}</span>`))) }`;
+  const { title, headers, rows, records } = reportRows();
+  return `${records ? improvementExportForm(records) : ""}<div class="section-head"><h2>${title}</h2></div><p class="report-meta">${el(reportFrom)} 至 ${el(reportTo)}${reportType === "weekly" ? "" : ` · 共 ${rows.length} 筆`}</p>${table(headers, rows.map((row) => row.map((value) => `<span class="preview-text">${el(value)}</span>`))) }`;
+}
+function improvementExportForm(records) {
+  return `<form id="improvement-export" class="filter improvement-export">
+    <label class="field search">缺失改善照片表<select name="record" required${records.length ? "" : " disabled"}>
+      <option value="">${records.length ? "請選擇缺失紀錄" : "所選日期內沒有缺失紀錄"}</option>
+      ${records.map((record) => `<option value="${el(record.id)}">${el(`${record.id} · ${record.date} · ${record.title}`)}</option>`).join("")}
+    </select></label>
+    <button type="submit" class="btn primary"${records.length ? "" : " disabled"}>${icon("download")}下載 Word</button>
+  </form>`;
 }
 function csvCell(value) {
   let content = String(value);
@@ -692,20 +713,24 @@ function downloadReport() {
     : [headers, ...rows];
   const csv = lines.map((row) => row.map(csvCell).join(",")).join("\r\n");
   const blob = new Blob(["\ufeff", csv], { type:"text/csv;charset=utf-8" });
+  downloadBlob(blob, `${title}_${reportFrom}_${reportTo}.csv`);
+}
+function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = `${title}_${reportFrom}_${reportTo}.csv`;
+  anchor.download = filename;
   anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function bindReport() {
   const form = main.querySelector("#report-filters");
+  const preview = main.querySelector("#report-preview");
   form.addEventListener("input", () => {
     reportFrom = form.elements.from.value;
     reportTo = form.elements.to.value;
     form.elements.to.min = reportFrom;
-    main.querySelector("#report-preview").innerHTML = reportPreview();
+    preview.innerHTML = reportPreview();
   });
   form.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -713,6 +738,18 @@ function bindReport() {
   });
   form.querySelector("[data-print]").addEventListener("click", () => {
     if (form.reportValidity()) window.print();
+  });
+  preview.addEventListener("submit", (event) => {
+    const exportForm = event.target;
+    if (exportForm.id !== "improvement-export") return;
+    event.preventDefault();
+    const record = data.records.find((entry) => entry.id === exportForm.elements.record.value);
+    if (!record) return;
+    commitForm(exportForm, async () => {
+      const projectName = document.querySelector("#project-name").textContent.trim();
+      const docx = await createImprovementDocument(record, projectName);
+      downloadBlob(docx, `缺失改善照片表_${record.id}.docx`);
+    });
   });
 }
 function render(focus = false) {

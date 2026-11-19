@@ -46,4 +46,5 @@ dialog{width:min(700px,calc(100% - 24px));max-height:90vh;border:1px solid var(-
 .gps-details dt{color:var(--muted)}
 .gps-details dd{margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
 .gps-details a{justify-self:start;color:#08685f;font-weight:650;font-size:.9rem}
+.improvement-export{padding:14px;border:1px solid var(--line);border-radius:8px;background:#f5f9fb;margin-bottom:20px}
 @media(max-width:850px){.inspection-location{grid-template-columns:minmax(0,1fr)}}
