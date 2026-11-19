@@ -115,10 +115,10 @@ function improvementParagraph(text, { centered = false, heading = false, keepNex
   return `<w:p><w:pPr>${properties}</w:pPr><w:r><w:rPr><w:rFonts w:ascii="標楷體" w:eastAsia="標楷體" w:hAnsi="標楷體"/>${heading ? "<w:b/>" : ""}<w:sz w:val="${heading ? 32 : 24}"/></w:rPr><w:t xml:space="preserve">${lines}</w:t></w:r></w:p>`;
 }
 
-function improvementDrawing(photo, { id, rel, photoRowHeight }) {
+function improvementDrawing(photo, { id, rel, photoFrame }) {
   // The template's photo column is 6202 twips wide, with 28 twips of padding on each side.
-  const maxWidth = photoRowHeight ? (6202 - 56) * 0.8 * 635 : 6.1 * 914400;
-  const maxHeight = photoRowHeight ? photoRowHeight * 0.8 * 635 : 3.25 * 914400;
+  const maxWidth = photoFrame ? (6202 - 56) * photoFrame.widthFraction * 635 : 6.1 * 914400;
+  const maxHeight = photoFrame ? photoFrame.rowHeight * photoFrame.heightFraction * 635 : 3.25 * 914400;
   const scale = Math.min(maxWidth / photo.width, maxHeight / photo.height);
   const width = Math.round(photo.width * scale);
   const height = Math.round(photo.height * scale);
@@ -139,9 +139,12 @@ async function createImprovementDocument(record, projectName) {
   const parts = await readImprovementTemplate();
   const passedReview = [...record.reviews].reverse().find((review) => review.passed);
   const stages = [
-    { key:"BEFORE", label:"改善前（缺失事項）", text:[record.title, record.location, record.notes].filter(Boolean).join("\n"), photos:record.before, date:record.date, photoRowHeight:3807 },
-    { key:"DURING", label:"改善中", text:record.duringNotes, photos:record.during ?? [], date:record.duringDate, photoRowHeight:4623 },
-    { key:"AFTER", label:"改善後", text:record.afterNotes || (passedReview?.notes ? `複查說明：${passedReview.notes}` : ""), photos:record.after, date:record.afterDate, photoRowHeight:4492 },
+    { key:"BEFORE", label:"改善前（缺失事項）", text:[record.title, record.location, record.notes].filter(Boolean).join("\n"),
+      photos:record.before, date:record.date, photoFrame:{ rowHeight:3807, widthFraction:0.8, heightFraction:0.8 } },
+    { key:"DURING", label:"改善中", text:record.duringNotes,
+      photos:record.during ?? [], date:record.duringDate, photoFrame:{ rowHeight:4623, widthFraction:0.94, heightFraction:0.89 } },
+    { key:"AFTER", label:"改善後", text:record.afterNotes || (passedReview?.notes ? `複查說明：${passedReview.notes}` : ""),
+      photos:record.after, date:record.afterDate, photoFrame:{ rowHeight:4492, widthFraction:0.94, heightFraction:0.89 } },
   ];
   const replacements = { PROJECT:xmlText(`工程名稱：${projectName}`) };
   const relationships = [];
@@ -166,7 +169,7 @@ async function createImprovementDocument(record, projectName) {
       parts[`word/${path}`] = image.bytes;
       relationships.push(`<Relationship Id="${rel}" Type="${wordRelationship}/image" Target="${path}"/>`);
       const drawing = improvementDrawing({ ...image, name:photo.name }, {
-        id:200000 + imageNumber, rel, photoRowHeight:index === 0 ? stage.photoRowHeight : undefined,
+        id:200000 + imageNumber, rel, photoFrame:index === 0 ? stage.photoFrame : undefined,
       });
       if (index === 0) tablePhoto += drawing;
       else appendix.push(improvementParagraph(`${stage.label}照片 ${index + 1}`, { keepNext:true }), drawing);
