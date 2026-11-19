@@ -1,1 +1,28 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="管理工地巡檢、缺失改善及職安報表。">
+  <title>工地安衛管理</title>
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#content">跳至主要內容</a>
+  <div class="layout">
+    <aside class="rail">
+      <div class="brand"><span class="brand-mark" data-icon="shield"></span><div>工地安衛管理<small>現場管理工作台</small></div></div>
+      <nav aria-label="主要導覽" id="nav"></nav>
+      <div class="rail-foot"><span data-icon="database"></span><div>本機工作區<small>紀錄儲存在此瀏覽器</small></div></div>
+    </aside>
+    <div class="workspace">
+      <header class="top"><div class="project"><span data-icon="building"></span><span>道路改善工程</span><span class="sample">示範工地</span></div><div class="top-date"><span data-icon="calendar"></span><time id="today"></time></div></header>
+      <main id="content" tabindex="-1"></main>
+    </div>
+  </div>
+  <dialog id="record"><div id="record-content"></div></dialog>
+  <div class="toast" id="toast" role="status"></div>
+</body>
+</html>
 
