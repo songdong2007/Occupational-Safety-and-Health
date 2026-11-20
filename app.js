@@ -567,7 +567,9 @@ function openRecord(id) {
   const closed = record.status === "closed";
   const canReview = record.status === "review";
   dialogContent.innerHTML = `<div class="section-head"><div><h2 id="dialog-title">${el(record.title)}</h2>
-    <small class="muted">${el(id)} · ${record.date}</small></div><button class="btn slim" data-close>關閉</button></div>
+    <small class="muted">${el(id)} · ${record.date}</small></div><div class="actions">
+      ${currentPage === "tracking" ? '<button type="button" class="btn slim" data-delete-record>刪除紀錄</button>' : ""}
+      <button class="btn slim" data-close>關閉</button></div></div>
     <div class="info"><p>${badge(record.status)} ${issueStatus(record) === "late" ? badge("late") : ""}</p>
     <p><strong>位置</strong> ${constructionZone.name}${record.position && record.location === positionCoordinates(record.position) ? "" : ` · ${el(record.location)}`}</p>
     ${record.position ? positionDetails(record.position) : ""}<p class="preview-text">${el(record.notes)}</p></div>
@@ -597,6 +599,14 @@ function openRecord(id) {
   showDialog();
   const update = dialogContent.querySelector("#update-record");
   const review = dialogContent.querySelector("#review-record");
+  dialogContent.querySelector("[data-delete-record]")?.addEventListener("click", () => {
+    if (savingForm || !window.confirm(`確定刪除「${id} ${record.title}」及其照片與複查紀錄？刪除後無法復原。`)) return;
+    commitForm(dialogContent, async () => {
+      await save({ ...data, records:data.records.filter((entry) => entry.id !== id) });
+      refreshAfterRecordChange();
+      notify("已刪除巡檢缺失紀錄。");
+    });
+  });
   update?.addEventListener("submit", (event) => {
     event.preventDefault();
     commitForm(update, async () => {
@@ -625,6 +635,9 @@ function openRecord(id) {
 }
 async function saveRecord(record) {
   await save({ ...data, records:data.records.map((entry) => entry.id === record.id ? record : entry) });
+  refreshAfterRecordChange();
+}
+function refreshAfterRecordChange() {
   dialog.close();
   if (currentPage === "tracking") {
     main.querySelector("#tracking-results").innerHTML = trackingRows(main.querySelector("#query").value);
