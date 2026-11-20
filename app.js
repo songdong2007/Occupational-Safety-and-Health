@@ -63,20 +63,18 @@ function offsetDate(days) {
 function issueStatus(record) {
   return record.status !== "closed" && record.due < today ? "late" : record.status;
 }
-function sampleData() {
+const sampleRecordIds = new Set(["巡-0001", "巡-0002", "巡-0003"]);
+function initialData() {
   return {
     work: [
       { id:"W01", title:"排水開挖", zone:constructionZone.id, location:"K0+230 · DR-07", owner:"土木班", date:today, status:"progress" },
       { id:"W02", title:"交維設施", zone:constructionZone.id, location:"K0+670 · TC-02", owner:"交維班", date:today, status:"progress" },
       { id:"W03", title:"路面鋪設", zone:constructionZone.id, location:"K1+120", owner:"鋪面班", date:today, status:"scheduled" },
     ],
-    records: [
-      { id:"巡-0001", date:offsetDate(-2), title:"開挖區圍設有缺口", zone:constructionZone.id, location:"K0+230 · DR-07", notes:"開挖區靠便道側圍設有缺口，請重新固定並確認隔離範圍。", owner:"土木班", due:offsetDate(-1), status:"open", before:[], after:[], reviews:[] },
-      { id:"巡-0002", date:offsetDate(-1), title:"臨時導引牌偏移", zone:constructionZone.id, location:"K0+670 · TC-02", notes:"轉向導引牌偏離行車視線，請調整位置。", owner:"交維班", due:today, status:"progress", before:[], after:[], reviews:[] },
-      { id:"巡-0003", date:today, title:"人行通道堆置材料", zone:constructionZone.id, location:"K1+100 · MH-16", notes:"人行通道需清理並保持暢通。", owner:"鋪面班", due:offsetDate(2), status:"review", before:[], after:[], reviews:[] },
-    ],
+    records:[],
     nextId:4,
     draft:null,
+    legacyDraftCleared:true,
   };
 }
 let db;
@@ -99,15 +97,6 @@ function openDatabase() {
     request.onupgradeneeded = () => request.result.createObjectStore("workspace");
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
-  });
-}
-function storage(mode, callback) {
-  return new Promise((resolve, reject) => {
-    const transaction = db.transaction("workspace", mode);
-    const request = callback(transaction.objectStore("workspace"));
-    transaction.oncomplete = () => resolve(request.result);
-    transaction.onabort = () => reject(transaction.error);
-    transaction.onerror = () => reject(transaction.error);
   });
 }
 async function save(next) {
@@ -213,7 +202,7 @@ function overview() {
       ${panel("近期巡檢缺失", table(["缺失事項", "改善期限", "狀態"], recentRecords().slice(0, 5).map((record) => [
         `${recordButton(record)}<small class="muted">${constructionZone.name} · ${el(record.location)}</small>`,
         el(record.due), badge(issueStatus(record)),
-      ])), btnLink("tracking", "全部缺失"), "inspect")}</div>
+      ]), "目前沒有巡檢缺失紀錄。"), btnLink("tracking", "全部缺失"), "inspect")}</div>
       <div class="stack"><section class="panel risk"><div class="section-head"><h2>${icon("shield")} 今日風險提醒</h2></div>
         ${work.length ? `<ul>${work.map((entry) => `<li><strong>${el(entry.title)} · ${constructionZone.name}</strong>
         ${el(hazardTips[entry.type] ?? hazardTips[entry.title] ?? "請現場人員確認作業環境、人員分工與防護措施。")}</li>`).join("")}</ul>` :
@@ -813,18 +802,39 @@ const dateElement = document.querySelector("#today");
 dateElement.dateTime = today;
 dateElement.textContent = new Intl.DateTimeFormat("zh-TW", { dateStyle:"full" }).format(new Date());
 
+function loadWorkspace() {
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction("workspace", "readwrite");
+    const store = transaction.objectStore("workspace");
+    const read = store.get("data");
+    let workspace;
+    read.onsuccess = () => {
+      const saved = read.result;
+      const records = saved?.records.filter((record) => !sampleRecordIds.has(record.id));
+      workspace = saved;
+      if (!saved) {
+        workspace = { ...initialData(), revision:1 };
+        store.put(workspace, "data");
+      } else if (!saved.legacyDraftCleared || records.length !== saved.records.length) {
+        workspace = {
+          ...saved,
+          records,
+          draft:saved.legacyDraftCleared ? saved.draft : null,
+          legacyDraftCleared:true,
+          revision:(saved.revision ?? 0) + 1,
+        };
+        store.put(workspace, "data");
+      }
+    };
+    transaction.oncomplete = () => resolve(workspace);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
 async function init() {
   try {
     db = await openDatabase();
-    data = await storage("readonly", (store) => store.get("data"));
-    if (!data) {
-      try {
-        await save(sampleData());
-      } catch (error) {
-        data = await storage("readonly", (store) => store.get("data"));
-        if (!data) throw error;
-      }
-    }
+    data = await loadWorkspace();
     render();
   } catch {
     main.innerHTML = heading("無法開啟工作區", "請確認瀏覽器允許此網站儲存資料，重新載入後再試。");
