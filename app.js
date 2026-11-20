@@ -64,6 +64,7 @@ function issueStatus(record) {
   return record.status !== "closed" && record.due < today ? "late" : record.status;
 }
 const sampleRecordIds = new Set(["巡-0001", "巡-0002", "巡-0003"]);
+const sampleWorkIds = new Set(["W01", "W02", "W03"]);
 function initialData() {
   return {
     work: [
@@ -195,9 +196,10 @@ function overview() {
     `<div class="stats">${stats.map(([name, count, caption, route, symbol, color]) => `
       <a class="stat" href="#${route}"><span class="stat-top">${name}<span class="stat-icon ${color}">${icon(symbol)}</span></span><strong>${count}</strong><small>${caption}</small></a>`).join("")}</div>
     <div class="dashboard"><div class="stack">
-      ${panel("今日施工", table(["工項／位置", "施工班組", "狀態"], work.map((entry) => [
+      ${panel("今日施工", table(["工項／位置", "施工班組", "狀態", "操作"], work.map((entry) => [
         `<strong>${el(entry.title)}</strong><small class="muted">${el([entry.type, constructionZone.name, entry.location].filter(Boolean).join(" · "))}</small>`,
         el(entry.owner), badge(entry.status, workStatus[entry.status]),
+        sampleWorkIds.has(entry.id) ? "" : `<button type="button" class="btn slim" data-edit-work="${el(entry.id)}" aria-label="編輯工項 ${el(entry.title)}">編輯</button>`,
       ]), "今天尚未登錄工項。"), '<button type="button" class="btn slim" data-work>新增工項</button>', "calendar")}
       ${panel("近期巡檢缺失", table(["缺失事項", "改善期限", "狀態"], recentRecords().slice(0, 5).map((record) => [
         `${recordButton(record)}<small class="muted">${constructionZone.name} · ${el(record.location)}</small>`,
@@ -239,32 +241,54 @@ function zoneDetails() {
     <li><strong>巡檢缺失</strong></li>${recentRecords().map((entry) =>
       `<li><div>${recordButton(entry)}<small>${el(entry.location)}</small></div>${badge(issueStatus(entry))}</li>`).join("") || '<li class="muted">本區無巡檢缺失。</li>'}</ul>`;
 }
-function openWork() {
-  dialogContent.innerHTML = `<div class="section-head"><h2 id="dialog-title">新增施工工項</h2><button class="btn slim" data-close>關閉</button></div>
+function openWork(id) {
+  const existing = id ? data.work.find((entry) => entry.id === id) : null;
+  if (id && (!existing || sampleWorkIds.has(id))) return;
+  const categories = existing?.type && !workCategories.includes(existing.type) ? [existing.type, ...workCategories] : workCategories;
+  dialogContent.innerHTML = `<div class="section-head"><h2 id="dialog-title">${existing ? "編輯施工工項" : "新增施工工項"}</h2><button class="btn slim" data-close>關閉</button></div>
     <form id="work-form"><div class="form-grid">
       <label class="field">工項名稱<input name="title" required maxlength="100"></label>
-      <label class="field">工程類別<select name="type"><option value="">其他</option>${workCategories.map((category) => `<option>${category}</option>`).join("")}</select></label>
+      <label class="field">工程類別<select name="type"><option value="">其他</option>${categories.map((category) => `<option>${el(category)}</option>`).join("")}</select></label>
       <label class="field">施工日期<input name="date" type="date" value="${today}" required></label>
       <label class="field">工區<input value="${el(constructionZone.name)}" readonly></label>
       <label class="field">樁號或設施編號<input name="location" required maxlength="100"></label>
       <label class="field">施工班組<input name="owner" required maxlength="80"></label>
       <label class="field">施工狀態<select name="status">${Object.entries(workStatus).map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></label>
-    </div><div class="actions"><button class="btn primary">儲存工項</button></div></form>`;
-  showDialog();
+    </div><div class="actions">
+      <button class="btn primary">儲存工項</button>
+      ${existing ? '<button type="button" class="btn danger" data-delete-work>刪除工項</button>' : ""}
+    </div></form>`;
   const form = dialogContent.querySelector("form");
+  if (existing) {
+    for (const key of ["title", "type", "date", "location", "owner", "status"]) {
+      form.elements[key].value = existing[key] ?? "";
+    }
+    form.querySelector("[data-delete-work]").addEventListener("click", () => {
+      if (savingForm || !window.confirm(`確定刪除「${existing.title}」？刪除後無法復原。`)) return;
+      commitForm(form, () => saveWork(data.work.filter((entry) => entry.id !== id), "已刪除施工工項。"));
+    });
+  }
+  showDialog();
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     commitForm(form, async () => {
-      const entry = Object.fromEntries(new FormData(form));
+      const entry = { ...existing, ...Object.fromEntries(new FormData(form)) };
       for (const key of ["title", "location", "owner"]) entry[key] = requireText(entry[key]);
-      entry.zone = constructionZone.id;
-      entry.id = crypto.randomUUID();
-      await save({ ...data, work:[...data.work, entry] });
-      dialog.close();
-      render();
-      notify("已新增施工工項");
+      if (existing) {
+        await saveWork(data.work.map((item) => item.id === id ? entry : item), "已更新施工工項。");
+      } else {
+        entry.zone = constructionZone.id;
+        entry.id = crypto.randomUUID();
+        await saveWork([...data.work, entry], "已新增施工工項。");
+      }
     });
   });
+}
+async function saveWork(work, message) {
+  await save({ ...data, work });
+  dialog.close();
+  render(true);
+  notify(message);
 }
 function showDialog() {
   dialog.setAttribute("aria-labelledby", "dialog-title");
@@ -793,6 +817,7 @@ main.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button || !data) return;
   if (button.hasAttribute("data-work")) openWork();
+  if (button.dataset.editWork) openWork(button.dataset.editWork);
   if (button.dataset.record) openRecord(button.dataset.record);
   if (button.hasAttribute("data-show-zone")) main.querySelector("#zone-details-title").focus();
   if (button.dataset.report) {
