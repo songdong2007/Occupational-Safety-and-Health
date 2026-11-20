@@ -196,8 +196,9 @@ function overview() {
     `<div class="stats">${stats.map(([name, count, caption, route, symbol, color]) => `
       <a class="stat" href="#${route}"><span class="stat-top">${name}<span class="stat-icon ${color}">${icon(symbol)}</span></span><strong>${count}</strong><small>${caption}</small></a>`).join("")}</div>
     <div class="dashboard"><div class="stack">
-      ${panel("今日施工", table(["工項／位置", "施工班組", "狀態", "操作"], work.map((entry) => [
+      ${panel("今日施工", table(["工項／位置", "施工內容", "施工班組", "狀態", "操作"], work.map((entry) => [
         `<strong>${el(entry.title)}</strong><small class="muted">${el([entry.type, constructionZone.name, entry.location].filter(Boolean).join(" · "))}</small>`,
+        entry.description ? `<span class="preview-text">${el(entry.description)}</span>` : '<span class="muted">—</span>',
         el(entry.owner), badge(entry.status, workStatus[entry.status]),
         sampleWorkIds.has(entry.id) ? "" : `<button type="button" class="btn slim" data-edit-work="${el(entry.id)}" aria-label="編輯工項 ${el(entry.title)}">編輯</button>`,
       ]), "今天尚未登錄工項。"), '<button type="button" class="btn slim" data-work>新增工項</button>', "calendar")}
@@ -232,7 +233,7 @@ function mapPage() {
 }
 function zoneWorkItems(work) {
   return work.map((entry) =>
-    `<li><div>${el(entry.title)}<small>${el(entry.location)}</small></div>${badge(entry.status, workStatus[entry.status])}</li>`
+    `<li><div>${el(entry.title)}<small>${el(entry.location)}</small>${entry.description ? `<small class="preview-text">${el(entry.description)}</small>` : ""}</div>${badge(entry.status, workStatus[entry.status])}</li>`
   ).join("") || '<li class="muted">本區今天無施工紀錄。</li>';
 }
 function zoneDetails() {
@@ -254,13 +255,14 @@ function openWork(id) {
       <label class="field">樁號或設施編號<input name="location" required maxlength="100"></label>
       <label class="field">施工班組<input name="owner" required maxlength="80"></label>
       <label class="field">施工狀態<select name="status">${Object.entries(workStatus).map(([id, label]) => `<option value="${id}">${label}</option>`).join("")}</select></label>
+      <label class="field full">施工內容（選填）<textarea name="description" maxlength="1000"></textarea></label>
     </div><div class="actions">
       <button class="btn primary">儲存工項</button>
       ${existing ? '<button type="button" class="btn danger" data-delete-work>刪除工項</button>' : ""}
     </div></form>`;
   const form = dialogContent.querySelector("form");
   if (existing) {
-    for (const key of ["title", "type", "date", "location", "owner", "status"]) {
+    for (const key of ["title", "type", "date", "location", "owner", "status", "description"]) {
       form.elements[key].value = existing[key] ?? "";
     }
     form.querySelector("[data-delete-work]").addEventListener("click", () => {
@@ -274,6 +276,7 @@ function openWork(id) {
     commitForm(form, async () => {
       const entry = { ...existing, ...Object.fromEntries(new FormData(form)) };
       for (const key of ["title", "location", "owner"]) entry[key] = requireText(entry[key]);
+      entry.description = entry.description.trim();
       if (existing) {
         await saveWork(data.work.map((item) => item.id === id ? entry : item), "已更新施工工項。");
       } else {
@@ -671,10 +674,10 @@ function refreshAfterRecordChange() {
 }
 
 function reportPage() {
-  return heading("報表匯出", "依日期篩選巡檢與缺失紀錄，匯出 CSV、列印，或下載缺失改善照片表。") +
+  return heading("報表匯出", "依日期篩選施工、巡檢與缺失紀錄，匯出 CSV、列印，或下載缺失改善照片表。") +
     `<section class="panel" id="report-panel">
     <div class="section-head report-actions"><div class="tabs" aria-label="報表種類">${[
-      ["inspection","巡檢紀錄"], ["issues","缺失改善"], ["weekly","每週職安摘要"],
+      ["inspection","巡檢紀錄"], ["work","施工紀錄"], ["issues","缺失改善"], ["weekly","每週職安摘要"],
     ].map(([key, label]) => `<button type="button" class="btn" data-report="${key}" aria-pressed="${reportType === key}">${label}</button>`).join("")}</div></div>
     <form class="filter" id="report-filters">
       <label class="field">起始日期<input name="from" type="date" value="${el(reportFrom)}" required></label>
@@ -685,6 +688,18 @@ function reportPage() {
 }
 function reportRows() {
   const inRange = (date) => date >= reportFrom && date <= reportTo;
+  if (reportType === "work") {
+    const work = data.work.filter((entry) => inRange(entry.date)).sort((a, b) => b.date.localeCompare(a.date));
+    return {
+      title:"施工紀錄",
+      headers:["施工日期", "工區", "樁號／設施", "工項名稱", "工程類別", "施工班組", "施工狀態", "施工內容"],
+      rows:work.map((entry) => [
+        entry.date, constructionZone.name, entry.location,
+        sampleWorkIds.has(entry.id) ? `${entry.title}（範例）` : entry.title,
+        entry.type ?? "", entry.owner, workStatus[entry.status], entry.description ?? "",
+      ]),
+    };
+  }
   const records = recentRecords().filter((record) => inRange(record.date));
   if (reportType === "inspection") return {
     title:"巡檢紀錄",
